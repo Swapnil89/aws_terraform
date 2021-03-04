@@ -24,6 +24,14 @@ s3 = boto3.client(
     service_name='s3',
     region_name=region
 )
+
+session = boto3.Session()
+
+sqs_client = session.client(
+    service_name='sqs',
+    endpoint_url='https://sqs.us-east-1.amazonaws.com',
+)
+
 sqs = boto3.client(
     service_name='sqs',
     region_name=region
@@ -61,7 +69,7 @@ def handler(event, context):
             print("Event from SQS retrieved. dataset_id: {}, revision_id: {}".format(dataset_id, revision_ids))
             
         # Used to store the Ids of the Jobs exporting the assets to S3.
-        job_ids = set()
+    job_ids = set()
 
         # iterate all revision ids to get assets
     for revision_id in revision_ids:
@@ -72,6 +80,7 @@ def handler(event, context):
             ## Need to add revision asset. dataset
             revision_assets = dataexchange.list_revision_assets(DataSetId=dataset_id, RevisionId=revision_id)
             # Create the Job which exports assets to S3. 
+            print("#Triggering export revision for : {}".format(revision_id))
             export_job = dataexchange.create_job(
                 Type='EXPORT_REVISIONS_TO_S3',
                 Details={
@@ -103,11 +112,14 @@ def handler(event, context):
                 continue
             get_job_response = dataexchange.get_job(JobId=job_id)
             if get_job_response['State'] == 'COMPLETED':
-                print ("Job {} completed".format(job_id))
+                print ("##Job {} completed".format(job_id))
                 completed_jobs.add(job_id)
                 # publish event in SNS Topic
                 message = create_message(dataset_id,revision_ids[0])
-                sqs.send_message(QueueUrl=outbound_sqs_queue, MessageBody=message, MessageGroupId=dataset_id)
+                print("###Sending message : {} to sqs".format(message))
+                print("###Sending url : {} ".format(outbound_sqs_queue))
+                response = sqs_client.send_message(QueueUrl=outbound_sqs_queue, MessageBody=message, MessageGroupId=dataset_id)
+                print("####Response from sqs : {} ".format(response['MessageId']))
             if get_job_response['State'] == 'ERROR':
                 job_errors = get_job_response['Errors']
                 raise Exception('JobId: {} failed with errors:\n{}'.format(job_id, job_errors))
