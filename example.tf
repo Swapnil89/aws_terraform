@@ -13,11 +13,12 @@ terraform {
 
 # Configure AWS Provider account & target region
 provider "aws" {
-  profile = "jawasi-myiam"
+  profile = "default"
   region  = "us-east-1"
 }
 
 # Require dataset ID and initial revision ID to be input before the deployment can take place (the dataset must be subscribed to manually in the AWS Console)
+/*
 variable "datasetID" {
   type        = string
   description = "ADX Heart Beat Test dataset"
@@ -27,6 +28,7 @@ variable "revisionID" {
   type        = string
   description = "REQUIRED: the ID for an initial Revision to download immediately."
 }
+*/
 
 # Create S3 bucket to store exported data in
 resource "aws_s3_bucket" "DataS3Bucket" {
@@ -42,6 +44,12 @@ resource "aws_s3_bucket_public_access_block" "DataS3BucketPublicAccessBlock" {
   restrict_public_buckets = true
 }
 
+resource "aws_s3_bucket_object" "adx_s3_folder" {
+  bucket       = aws_s3_bucket.DataS3Bucket.id
+  key          = "adx-cpi/"
+  content_type = "application/x-directory"
+}
+
 
 # Create new EventBridge rule to trigger on the Revision Published To Data Set event .This is invocation
 resource "aws_cloudwatch_event_rule" "NewRevisionEventRule" {
@@ -50,31 +58,38 @@ resource "aws_cloudwatch_event_rule" "NewRevisionEventRule" {
   event_pattern = jsonencode({
     source      = ["aws.dataexchange"],
     detail-type = ["Revision Published To Data Set"],
-    resources   = [var.datasetID]
+    resources   = [ "aae4c2cd145a48454f9369d4a4db5c66" ]
   })
 }
 
-# Create trigger for EventBRidge rule to Lambda function .This is triggering target
-# resource "aws_cloudwatch_event_target" "TargetGetNewRevision" { ## comment this out to see if you see any trigget in cloudwatch. I'm unable to see target_id of this trigger in cloudwatch or lambda
-#   rule      = aws_cloudwatch_event_rule.NewRevisionEventRule.name
-#   target_id = "TargetGetNewRevision"
-#   arn       = aws_lambda_function.FunctionGetNewRevision.arn
-# }
-
-# Create Lambda function using Python code included in lambda_code.zip
+# Create Lambda function using Python code included in index.zip
 resource "aws_lambda_function" "FunctionGetNewRevision" {
   function_name    = "FunctionGetNewRevision"
-  filename         = "lambda_code.zip"
-  source_code_hash = filebase64sha256("lambda_code.zip")
+  filename         = "index.zip"
+  source_code_hash = filebase64sha256("index.zip")
   handler          = "index.handler"
+  //Swapnil changes
+  vpc_config {
+    subnet_ids         = ["${aws_subnet.lambda_subnet.id}"]
+    security_group_ids = [ "${aws_security_group.allow_tls.id}" ]
+  }
+  //till here
   environment {
     variables = {
-      S3_BUCKET = aws_s3_bucket.DataS3Bucket.bucket
+      S3_BUCKET          = aws_s3_bucket.DataS3Bucket.bucket
+      INBOUND_SQS_QUEUE  = aws_sqs_queue.adx_sqs_queue.id
+      OUTBOUND_SQS_QUEUE = aws_sqs_queue.adx-s3export-new-revision-event-queue.id
     }
   }
   role    = aws_iam_role.RoleGetNewRevision.arn
   runtime = "python3.7"
   timeout = 180
+}
+
+# Attach LambdaBasicExecutionRole AWS Managed Policy to Lambda Execution Role(RoleGetNewRevision)
+resource "aws_iam_role_policy_attachment" "RoleGetNewRevisionAttachment" {
+  role       = aws_iam_role.RoleGetNewRevision.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
 }
 
 # Provide permission for EventBridge to invoke Lambda function
@@ -109,6 +124,22 @@ resource "aws_iam_role_policy" "RoleGetNewRevisionPolicy" {
   policy = jsonencode({
     Version = "2012-10-17",
     Statement = [
+      //Swapnil change
+      {
+            "Sid": "VisualEditor0",
+            "Effect": "Allow",
+            "Action": [
+                "ec2:CreateNetworkInterface",
+                "ec2:DetachNetworkInterface",
+                "ec2:DescribeNetworkInterfaces",
+                "ec2:DeleteNetworkInterface",
+                "logs:CreateLogGroup",
+                "logs:PutLogEvents",
+                "logs:CreateLogStream"
+            ],
+            "Resource": "*"
+      },
+      //till here
       {
         Effect = "Allow"
         Action = [
@@ -116,7 +147,8 @@ resource "aws_iam_role_policy" "RoleGetNewRevisionPolicy" {
           "dataexchange:CreateJob",
           "dataexchange:GetJob",
           "dataexchange:ListRevisionAssets",
-          "dataexchange:GetAsset"
+          "dataexchange:GetAsset",
+          "dataexchange:GetRevision"
         ]
         Resource = "*"
       },
@@ -133,6 +165,16 @@ resource "aws_iam_role_policy" "RoleGetNewRevisionPolicy" {
         }
       },
       {
+        Effect   = "Allow",
+        Action   = [
+          "sqs:DeleteMessage",
+          "sqs:GetQueueAttributes",
+          "sqs:ReceiveMessage",
+          "sqs:SendMessage"
+        ],
+        Resource = "*"
+      },
+      {
         Effect = "Allow",
         Action = "s3:PutObject",
         Resource = [
@@ -144,64 +186,27 @@ resource "aws_iam_role_policy" "RoleGetNewRevisionPolicy" {
   })
 }
 
-# Attach LambdaBasicExecutionRole AWS Managed Policy to Lambda Execution Role(RoleGetNewRevision) ##Test. comment out and see what it does
-# resource "aws_iam_role_policy_attachment" "RoleGetNewRevisionAttachment" {
-#   role       = aws_iam_role.RoleGetNewRevision.name
-#   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+# Invoke Lambda function for initial data export
+# data "aws_lambda_invocation" "FirstRevision" {
+#   function_name = aws_lambda_function.FunctionGetNewRevision.function_name
+#   input = jsonencode(
+#     {
+#       InitialInit = {
+#         data_set_id = var.datasetID,
+#         RevisionIds = var.revisionID
+#       }
+#     }
+#   )
 # }
 
 
-
-# Invoke Lambda function for initial data export
-data "aws_lambda_invocation" "FistRevision" {
-  function_name = aws_lambda_function.FunctionGetNewRevision.function_name
-  input = jsonencode(
-    {
-      InitialInit = {
-        data_set_id = var.datasetID,
-        RevisionIds = var.revisionID
-      }
-    }
-  )
-}
-
-# Create SNS topic resource
-resource "aws_sns_topic" "adx_sns_topic" {
-  name = "adx_sns_topic"
-  # display_name = "adx_sns_topic"
-}
-
-# Create policy for SNS topic
-resource "aws_sns_topic_policy" "adx_sns_topic_policy" {
-  arn    = aws_sns_topic.adx_sns_topic.arn
-  policy = data.aws_iam_policy_document.sns_topic_policy.json
-
-}
-
-data "aws_iam_policy_document" "sns_topic_policy" {
-  policy_id = "__default_policy_ID"
-  statement {
-    actions = [
-      "sns:Publish"
-    ]
-    principals {
-      type        = "Service"
-      identifiers = ["events.amazonaws.com"]
-    }
-    effect = "Allow"
-    resources = [
-      aws_sns_topic.adx_sns_topic.arn,
-    ]
-    sid = "__default_statement_ID"
-  }
-}
-
-# Create SQS Queue "adx_sns_topic"
+# Create SQS Queue "adx_sqs_queue"
 resource "aws_sqs_queue" "adx_sqs_queue" {
-  name                        = "adx_sqs_queue"
-  fifo_queue                  = false
-  content_based_deduplication = false
+  name                        = "adx_sqs_queue.fifo"
+  fifo_queue                  = true
+  content_based_deduplication = true
   max_message_size            = 2048
+  visibility_timeout_seconds  = 240
 }
 
 
@@ -217,34 +222,33 @@ resource "aws_sqs_queue_policy" "adx_sqs_queue_policy" {
       "Sid": "First",
       "Effect": "Allow",
       "Principal": "*",
-      "Action": "sqs:SendMessage",
-      "Resource": "${aws_sqs_queue.adx_sqs_queue.arn}",
-      "Condition": {
-        "ArnEquals": {
-          "aws:SourceArn": "${aws_sns_topic.adx_sns_topic.arn}"
-        }
-      }
+      "Action": "sqs:*",
+      "Resource": "${aws_sqs_queue.adx_sqs_queue.arn}"
     }
   ]
 }
 POLICY
 }
 
-# Subscribe to topic "adx_sns_topic" by "adx_sqs_queue"
-resource "aws_sns_topic_subscription" "adx_sns_topic_subscribed_by_adx_sqs_queue" {
-  topic_arn = aws_sns_topic.adx_sns_topic.arn
-  protocol  = "sqs"
-  endpoint  = aws_sqs_queue.adx_sqs_queue.arn
-}
-
-# Create trigger for EventBRidge rule to Lambda function .This is triggering target
+# Create trigger for EventBridge/Cloudwatch rule to SQS queue adx_sqs_queue .This is triggering target
 resource "aws_cloudwatch_event_target" "TargetGetNewRevision" {
   rule      = aws_cloudwatch_event_rule.NewRevisionEventRule.name
   target_id = "TargetGetNewRevision"
-  arn       = aws_sns_topic.adx_sns_topic.arn
+  arn       = aws_sqs_queue.adx_sqs_queue.arn
+  sqs_target {
+    message_group_id = "aae4c2cd145a48454f9369d4a4db5c66"
+  }
 }
 
-data "aws_caller_identity" "current" {}
+# Setup SQS Queue Trigger for S3 Export Lambda
+resource "aws_lambda_event_source_mapping" "s3ExportLambdaTrigger" {
+  event_source_arn = aws_sqs_queue.adx_sqs_queue.arn
+  function_name    = aws_lambda_function.FunctionGetNewRevision.function_name
+}
+
+data "aws_caller_identity" "current" {
+
+}
 
 output "account_id" {
   value = data.aws_caller_identity.current.account_id
@@ -258,3 +262,141 @@ output "caller_user" {
   value = data.aws_caller_identity.current.user_id
 }
 
+# Create SQS Queue 'adx-s3export-new-revision-event-queue'
+resource "aws_sqs_queue" "adx-s3export-new-revision-event-queue" {
+  name                        = "adx-s3export-new-revision-event-queue.fifo"
+  fifo_queue                  = true
+  content_based_deduplication = true
+  max_message_size            = 2048
+  visibility_timeout_seconds  = 600
+}
+
+# Create policy "adx-s3export-new-revision-event-queue-policy" and attach it to "adx-s3export-new-revision-event-queue"
+resource "aws_sqs_queue_policy" "adx-s3export-new-revision-event-queue-policy" {
+  queue_url = aws_sqs_queue.adx-s3export-new-revision-event-queue.id
+  policy    = <<POLICY
+{
+  "Version": "2012-10-17",
+  "Id": "sqspolicy",
+  "Statement": [
+    {
+      "Sid": "First",
+      "Effect": "Allow",
+      "Principal": "*",
+      "Action": "sqs:*",
+      "Resource": "${aws_sqs_queue.adx-s3export-new-revision-event-queue.arn}"
+    }
+  ]
+}
+POLICY
+}
+
+
+//Swapnil changes
+resource "aws_vpc" "lambda_vpc" {
+  cidr_block = "10.10.0.0/16"
+  enable_dns_support   = true
+  enable_dns_hostnames = true
+}
+
+resource "aws_subnet" "lambda_subnet" {
+  vpc_id                  = "${aws_vpc.lambda_vpc.id}"
+  cidr_block        	    = "10.10.10.0/24"
+  availability_zone       = "us-east-1a"
+}
+
+resource "aws_security_group" "allow_tls" {
+  name        = "allow_tls"
+  description = "Allow TLS inbound traffic"
+  vpc_id      = "${aws_vpc.lambda_vpc.id}"
+
+  ingress {
+    description = "TLS/HTTPS from VPC"
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = [ "10.10.10.0/24" ]
+  }
+
+  egress {
+    description = "TLS/HTTPS to VPC"
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = [ "10.10.10.0/24" ]
+  }
+
+  tags = {
+    Name = "allow_tls"
+  }
+}
+
+resource "aws_vpc_endpoint" "adx_vpc_endpoint" {
+  vpc_id       = "${aws_vpc.lambda_vpc.id}"
+  subnet_ids   = ["${aws_subnet.lambda_subnet.id}"]
+  service_name = "com.amazonaws.us-east-1.dataexchange"
+  vpc_endpoint_type = "Interface"
+  private_dns_enabled = true
+  security_group_ids = [
+    "${aws_security_group.allow_tls.id}"
+  ]
+  policy = <<POLICY
+{
+  "Version": "2012-10-17",
+  "Id": "adx_sqs_endpoint_policy",
+  "Statement": [
+    {
+      "Sid": "adx_sqs_endpoint_policy_First",
+      "Effect": "Allow",
+      "Principal": "*",
+      "Action": [
+          "dataexchange:StartJob",
+          "dataexchange:CreateJob",
+          "dataexchange:GetJob",
+          "dataexchange:ListRevisionAssets",
+          "dataexchange:GetAsset",
+          "dataexchange:GetRevision"
+      ],
+      "Resource": "*"
+    }
+  ]
+}
+POLICY
+}
+
+resource "aws_vpc_endpoint" "sqs_vpc_endpoint" {
+  vpc_id       = "${aws_vpc.lambda_vpc.id}"
+  subnet_ids   = ["${aws_subnet.lambda_subnet.id}"]
+  service_name = "com.amazonaws.us-east-1.sqs"
+  vpc_endpoint_type = "Interface"
+  private_dns_enabled = true
+  security_group_ids = [
+    "${aws_security_group.allow_tls.id}"
+  ]
+  policy = <<POLICY
+{
+  "Version": "2012-10-17",
+  "Id": "adx_sqs_endpoint_policy",
+  "Statement": [
+    {
+      "Sid": "adx_sqs_endpoint_policy_First",
+      "Effect": "Allow",
+      "Principal": "*",
+      "Action": [
+        "sqs:DeleteMessage",
+          "sqs:GetQueueAttributes",
+          "sqs:ReceiveMessage",
+          "sqs:SendMessage"
+      ],
+      "Resource": "*"
+    }
+  ]
+}
+POLICY
+}
+
+resource "aws_vpc_endpoint" "s3_vpc_endpoint" {
+  vpc_id       = "${aws_vpc.lambda_vpc.id}"
+  service_name = "com.amazonaws.us-east-1.s3"
+}
+  //till here
