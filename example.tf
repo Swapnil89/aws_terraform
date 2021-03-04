@@ -139,6 +139,14 @@ resource "aws_iam_role_policy" "RoleGetNewRevisionPolicy" {
             ],
             "Resource": "*"
       },
+      {
+        Effect = "Allow"
+        Action = [
+            "kms:GenerateDataKey",
+            "kms:Decrypt"
+         ],
+        Resource = "*"
+      },
       //till here
       {
         Effect = "Allow"
@@ -207,6 +215,9 @@ resource "aws_sqs_queue" "adx_sqs_queue" {
   content_based_deduplication = true
   max_message_size            = 2048
   visibility_timeout_seconds  = 240
+  //Swapnil changes
+  kms_master_key_id           = aws_kms_key.adx_kms_kms_key.key_id
+  //till here
 }
 
 
@@ -269,6 +280,9 @@ resource "aws_sqs_queue" "adx-s3export-new-revision-event-queue" {
   content_based_deduplication = true
   max_message_size            = 2048
   visibility_timeout_seconds  = 600
+  //Swapnil changes
+  kms_master_key_id           = aws_kms_key.adx_kms_kms_key.key_id
+  //till here
 }
 
 # Create policy "adx-s3export-new-revision-event-queue-policy" and attach it to "adx-s3export-new-revision-event-queue"
@@ -399,4 +413,51 @@ resource "aws_vpc_endpoint" "s3_vpc_endpoint" {
   vpc_id       = "${aws_vpc.lambda_vpc.id}"
   service_name = "com.amazonaws.us-east-1.s3"
 }
+
+data "aws_iam_policy_document" "adx_pipeline_kms_policy" {
+  statement {
+    effect = "Allow"
+    resources = ["*"]
+    actions = [ "kms:*" ]
+    principals  {
+      type = "AWS"
+      identifiers = [
+        "arn:aws:iam::${data.aws_caller_identity.current.account_id}:root",
+        data.aws_caller_identity.current.arn
+      ]
+    }
+  }
+
+  statement {
+    effect = "Allow"
+    resources = ["*"]
+    actions = [ "kms:GenerateDataKey*", "kms:Decrypt" ]
+    principals { 
+      type = "Service"
+      identifiers = ["events.amazonaws.com"]
+    }
+  }
+
+  statement {
+    effect = "Allow"
+    resources = ["*"]
+    actions = [ "kms:GenerateDataKey*", "kms:Decrypt" ]
+    principals { 
+      type = "Service"
+      identifiers = ["lambda.amazonaws.com"]
+    }
+  }
+}
+
+resource "aws_kms_key" "adx_kms_kms_key" {
+  description             = "KMS key for encryption of adx resources"
+  deletion_window_in_days = 10
+  policy                  = data.aws_iam_policy_document.adx_pipeline_kms_policy.json
+}
+
+resource "aws_kms_alias" "adx_kms_kms_key_alias" {
+  name          = "alias/adx_kmx_key"
+  target_key_id = aws_kms_key.adx_kms_kms_key.key_id
+}
+
   //till here
