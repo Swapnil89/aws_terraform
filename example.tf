@@ -46,7 +46,7 @@ resource "aws_s3_bucket_public_access_block" "DataS3BucketPublicAccessBlock" {
 
 resource "aws_s3_bucket_object" "adx_s3_folder" {
   bucket       = aws_s3_bucket.DataS3Bucket.id
-  key          = "adx-cpi/"
+  key          = "adx/export/"
   content_type = "application/x-directory"
 }
 
@@ -186,8 +186,8 @@ resource "aws_iam_role_policy" "RoleGetNewRevisionPolicy" {
         Effect = "Allow",
         Action = "s3:PutObject",
         Resource = [
-          aws_s3_bucket.DataS3Bucket.arn,
-          join("", [aws_s3_bucket.DataS3Bucket.arn, "/*"])
+        "arn:aws:s3:::${aws_s3_bucket.DataS3Bucket.id}",
+        join("", ["arn:aws:s3:::${aws_s3_bucket.DataS3Bucket.id}", "/*"])
         ]
       }
     ]
