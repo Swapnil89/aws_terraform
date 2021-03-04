@@ -71,7 +71,7 @@ resource "aws_lambda_function" "FunctionGetNewRevision" {
   //Swapnil changes
   vpc_config {
     subnet_ids         = ["${aws_subnet.lambda_subnet.id}"]
-    security_group_ids = [ "${aws_security_group.allow_tls.id}" ]
+    security_group_ids = [ "${aws_security_group.allow_adx_https.id}", "${aws_security_group.allow_sqs_https.id}" ]
   }
   //till here
   environment {
@@ -175,10 +175,7 @@ resource "aws_iam_role_policy" "RoleGetNewRevisionPolicy" {
       {
         Effect   = "Allow",
         Action   = [
-          "sqs:DeleteMessage",
-          "sqs:GetQueueAttributes",
-          "sqs:ReceiveMessage",
-          "sqs:SendMessage"
+          "sqs:*"
         ],
         Resource = "*"
       },
@@ -319,29 +316,56 @@ resource "aws_subnet" "lambda_subnet" {
   availability_zone       = "us-east-1a"
 }
 
-resource "aws_security_group" "allow_tls" {
-  name        = "allow_tls"
-  description = "Allow TLS inbound traffic"
+resource "aws_security_group" "allow_adx_https" {
+  name        = "allow_adx_https"
+  description = "allow_adx_https"
   vpc_id      = "${aws_vpc.lambda_vpc.id}"
 
   ingress {
-    description = "TLS/HTTPS from VPC"
+    description = "allow_adx_https from VPC"
     from_port   = 443
     to_port     = 443
     protocol    = "tcp"
-    cidr_blocks = [ "10.10.10.0/24" ]
+    cidr_blocks = [ "10.10.0.0/16" ]
   }
 
   egress {
-    description = "TLS/HTTPS to VPC"
+    description = "allow_adx_https to VPC"
     from_port   = 443
     to_port     = 443
     protocol    = "tcp"
-    cidr_blocks = [ "10.10.10.0/24" ]
+    cidr_blocks = [ "10.10.0.0/16" ]
   }
 
   tags = {
-    Name = "allow_tls"
+    Name = "allow_adx_https"
+  }
+}
+
+
+resource "aws_security_group" "allow_sqs_https" {
+  name        = "allow_sqs_https"
+  description = "allow_sqs_https"
+  vpc_id      = "${aws_vpc.lambda_vpc.id}"
+
+  ingress {
+    description = "allow_sqs_https from VPC"
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = [ "10.10.0.0/16" ]
+  }
+
+  egress {
+    description = "allow_sqs_https to VPC"
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = [ "10.10.0.0/16" ]
+  }
+
+  tags = {
+    Name = "allow_sqs_https"
   }
 }
 
@@ -352,7 +376,7 @@ resource "aws_vpc_endpoint" "adx_vpc_endpoint" {
   vpc_endpoint_type = "Interface"
   private_dns_enabled = true
   security_group_ids = [
-    "${aws_security_group.allow_tls.id}"
+    "${aws_security_group.allow_adx_https.id}"
   ]
   policy = <<POLICY
 {
@@ -385,7 +409,7 @@ resource "aws_vpc_endpoint" "sqs_vpc_endpoint" {
   vpc_endpoint_type = "Interface"
   private_dns_enabled = true
   security_group_ids = [
-    "${aws_security_group.allow_tls.id}"
+    "${aws_security_group.allow_sqs_https.id}"
   ]
   policy = <<POLICY
 {
@@ -397,10 +421,7 @@ resource "aws_vpc_endpoint" "sqs_vpc_endpoint" {
       "Effect": "Allow",
       "Principal": "*",
       "Action": [
-        "sqs:DeleteMessage",
-          "sqs:GetQueueAttributes",
-          "sqs:ReceiveMessage",
-          "sqs:SendMessage"
+        "sqs:*"
       ],
       "Resource": "*"
     }
