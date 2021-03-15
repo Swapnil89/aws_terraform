@@ -214,9 +214,23 @@ resource "aws_sqs_queue_policy" "adx_sqs_queue_policy" {
     {
       "Sid": "First",
       "Effect": "Allow",
-      "Principal": "*",
-      "Action": "sqs:*",
+      "Principal": {"AWS":[ "${aws_iam_role.RoleGetNewRevision.arn}" ]},
+      "Action": [ "sqs:DeleteMessage",
+                  "sqs:GetQueueAttributes",
+                  "sqs:ReceiveMessage" ],
       "Resource": "${aws_sqs_queue.adx_sqs_queue.arn}"
+    },
+    {
+      "Sid": "EventsToMyQueue",
+      "Effect": "Allow",
+      "Principal": {"Service": "events.amazonaws.com"},
+      "Action": "sqs:SendMessage",
+      "Resource": "${aws_sqs_queue.adx_sqs_queue.arn}",
+      "Condition": {
+        "ArnEquals": {
+          "aws:SourceArn": "${aws_cloudwatch_event_rule.NewRevisionEventRule.arn}"
+        }
+      }
     }
   ]
 }
