@@ -165,13 +165,6 @@ resource "aws_iam_role_policy" "RoleGetNewRevisionPolicy" {
         }
       },
       {
-        Effect   = "Allow",
-        Action   = [
-          "sqs:*"
-        ],
-        Resource = "*"
-      },
-      {
         Effect = "Allow",
         Action = "s3:PutObject",
         Resource = [
@@ -285,8 +278,8 @@ resource "aws_sqs_queue_policy" "adx-s3export-new-revision-event-queue-policy" {
     {
       "Sid": "First",
       "Effect": "Allow",
-      "Principal": "*",
-      "Action": "sqs:*",
+      "Principal": {"AWS":[ "${aws_iam_role.RoleGetNewRevision.arn}" ]},
+      "Action": "sqs:SendMessage",
       "Resource": "${aws_sqs_queue.adx-s3export-new-revision-event-queue.arn}"
     }
   ]
