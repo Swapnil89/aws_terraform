@@ -416,13 +416,20 @@ resource "aws_vpc_endpoint" "sqs_vpc_endpoint" {
   "Id": "adx_sqs_endpoint_policy",
   "Statement": [
     {
-      "Sid": "adx_sqs_endpoint_policy_First",
+      "Sid": "First",
       "Effect": "Allow",
-      "Principal": "*",
-      "Action": [
-        "sqs:*"
-      ],
-      "Resource": "*"
+      "Principal": {"AWS":[ "${aws_iam_role.RoleGetNewRevision.arn}" ]},
+      "Action": [ "sqs:DeleteMessage",
+                  "sqs:GetQueueAttributes",
+                  "sqs:ReceiveMessage" ],
+      "Resource": "${aws_sqs_queue.adx_sqs_queue.arn}"
+    },
+    {
+      "Sid": "Second",
+      "Effect": "Allow",
+      "Principal": {"AWS":[ "${aws_iam_role.RoleGetNewRevision.arn}" ]},
+      "Action": "sqs:SendMessage",
+      "Resource": "${aws_sqs_queue.adx-s3export-new-revision-event-queue.arn}"
     }
   ]
 }
