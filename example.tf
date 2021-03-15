@@ -139,14 +139,6 @@ resource "aws_iam_role_policy" "RoleGetNewRevisionPolicy" {
             ],
             "Resource": "*"
       },
-      {
-        Effect = "Allow"
-        Action = [
-            "kms:GenerateDataKey",
-            "kms:Decrypt"
-         ],
-        Resource = "*"
-      },
       //till here
       {
         Effect = "Allow"
@@ -462,10 +454,10 @@ data "aws_iam_policy_document" "adx_pipeline_kms_policy" {
   statement {
     effect = "Allow"
     resources = ["*"]
-    actions = [ "kms:GenerateDataKey*", "kms:Decrypt" ]
+    actions = [ "kms:Encrypt","kms:DescribeKey","kms:ReEncrypt*","kms:GenerateDataKey*", "kms:Decrypt" ]
     principals { 
-      type = "Service"
-      identifiers = ["lambda.amazonaws.com"]
+      type = "AWS"
+      identifiers = [ aws_iam_role.RoleGetNewRevision.arn ]
     }
   }
 }
