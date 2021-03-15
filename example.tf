@@ -442,11 +442,6 @@ data "aws_iam_policy_document" "adx_pipeline_kms_policy" {
       type = "Service"
       identifiers = ["events.amazonaws.com"]
     }
-    condition {
-      test = "ArnEquals"
-      values = ["${aws_cloudwatch_event_rule.NewRevisionEventRule.arn}"]
-      variable = "aws:SourceArn"
-    }
   }
 
   statement {
